@@ -8,6 +8,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: apartment-hunter
+  cancel-in-progress: false
+
 jobs:
   scrape:
     runs-on: ubuntu-latest
