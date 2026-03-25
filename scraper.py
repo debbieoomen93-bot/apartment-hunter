@@ -74,13 +74,15 @@ def send_telegram(listing: dict) -> None:
                 },
                 timeout=10,
             )
+            print(f"  sendPhoto to {chat_id}: {resp.status_code} {resp.text[:100]}")
             if resp.ok:
                 continue
-        requests.post(
+        resp = requests.post(
             f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
             data={"chat_id": chat_id, "text": text, "parse_mode": "HTML"},
             timeout=10,
         )
+        print(f"  sendMessage to {chat_id}: {resp.status_code} {resp.text[:100]}")
 
 
 # ── Funda scraper ─────────────────────────────────────────────────────────────
@@ -217,12 +219,16 @@ def parse_listing(item: dict) -> dict:
 
 def main():
     seen = load_seen()
+    print(f"Seen IDs loaded: {sorted(seen)}")
+    print(f"Sending to chat IDs: {TELEGRAM_CHAT_IDS}")
     new_count = 0
 
     listings = scrape_funda()
 
     for listing in listings:
+        print(f"Listing: {listing['id']} — in seen: {listing['id'] in seen}")
         if listing["id"] not in seen:
+            print(f"Sending notification for {listing['id']}...")
             send_telegram(listing)
             seen.add(listing["id"])
             new_count += 1
