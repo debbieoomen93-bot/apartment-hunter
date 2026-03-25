@@ -10,7 +10,7 @@ import os
 import re
 import time
 
-import requests
+import cloudscraper
 from bs4 import BeautifulSoup
 
 # ── Config ───────────────────────────────────────────────────────────────────
@@ -19,16 +19,10 @@ TELEGRAM_TOKEN   = os.environ["TELEGRAM_TOKEN"]
 TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 SEEN_FILE = "seen.json"
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept-Language": "nl-NL,nl;q=0.9,en;q=0.8",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-    "Referer": "https://www.google.nl/",
-}
+# cloudscraper handles anti-bot / Cloudflare challenges automatically
+scraper = cloudscraper.create_scraper(
+    browser={"browser": "chrome", "platform": "windows", "mobile": False}
+)
 
 # ── Persistence ───────────────────────────────────────────────────────────────
 
@@ -54,8 +48,9 @@ def send_telegram(listing: dict) -> None:
         f"📍 {listing['address']}\n"
         f"🔗 <a href=\"{listing['url']}\">Bekijk op {listing['source']}</a>"
     )
+    import requests as req
     if listing.get("image"):
-        resp = requests.post(
+        resp = req.post(
             f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto",
             data={
                 "chat_id": TELEGRAM_CHAT_ID,
@@ -67,10 +62,9 @@ def send_telegram(listing: dict) -> None:
         )
         if resp.ok:
             return
-        # Photo failed — fall back to text-only
         listing = {**listing, "image": None}
 
-    requests.post(
+    req.post(
         f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
         data={
             "chat_id": TELEGRAM_CHAT_ID,
@@ -85,27 +79,35 @@ def send_telegram(listing: dict) -> None:
 
 def scrape_funda() -> list:
     listings = []
-    # Price up to 1250, living area from 50m²
     url = "https://www.funda.nl/huur/s-hertogenbosch/0-1250/+50woonopp/"
     try:
-        r = requests.get(url, headers=HEADERS, timeout=15)
-        r.raise_for_status()
+        r = scraper.get(url, timeout=20)
+        print(f"[Funda] HTTP {r.status_code}")
         soup = BeautifulSoup(r.text, "lxml")
 
-        # Modern Funda uses Next.js — data is embedded as JSON
+        # Print page title so we can spot captcha/block pages
+        title_tag = soup.find("title")
+        print(f"[Funda] Page title: {title_tag.get_text() if title_tag else 'none'}")
+
+        # Modern Funda embeds all data in a Next.js __NEXT_DATA__ script tag
         script = soup.find("script", {"id": "__NEXT_DATA__"})
         if script:
             data = json.loads(script.string)
             props = data.get("props", {}).get("pageProps", {})
+            print(f"[Funda] pageProps keys: {list(props.keys())}")
+
             result = props.get("searchResult") or props.get("initialData") or {}
+            print(f"[Funda] result keys: {list(result.keys()) if isinstance(result, dict) else type(result)}")
+
             properties = result.get("Properties") or result.get("properties") or []
+            print(f"[Funda] Raw property count: {len(properties)}")
+
             for p in properties:
                 item = _funda_from_json(p)
                 if item:
                     listings.append(item)
-
-        # Fallback: parse HTML cards directly
-        if not listings:
+        else:
+            print("[Funda] __NEXT_DATA__ not found — trying HTML fallback")
             for card in soup.select('[data-test-id="search-result-item"]'):
                 item = _funda_from_html(card)
                 if item:
@@ -130,8 +132,8 @@ def _funda_from_json(p: dict) -> dict:
 
         listing_id = f"funda_{gid}"
         url = "https://www.funda.nl" + relative_url
-        street = f"{p.get('Street', '')} {p.get('HouseNumber', '')}".strip()
-        city   = f"{p.get('ZipCode', '')} {p.get('City', '')}".strip()
+        street  = f"{p.get('Street', '')} {p.get('HouseNumber', '')}".strip()
+        city    = f"{p.get('ZipCode', '')} {p.get('City', '')}".strip()
         address = f"{street}, {city}".strip(", ")
         price   = p.get("PriceFormatted") or f"€ {p.get('Price', '?')}/mnd"
         size    = f"{p.get('LivingArea', '?')} m²"
@@ -203,8 +205,8 @@ def scrape_pararius() -> list:
     listings = []
     url = "https://www.pararius.nl/huurwoningen/s-hertogenbosch/0-1250/50m2"
     try:
-        r = requests.get(url, headers=HEADERS, timeout=15)
-        r.raise_for_status()
+        r = scraper.get(url, timeout=20)
+        print(f"[Pararius] HTTP {r.status_code}")
         soup = BeautifulSoup(r.text, "lxml")
 
         for item in soup.select("li.search-list__item--listing"):
@@ -269,7 +271,7 @@ def main():
             send_telegram(listing)
             seen.add(listing["id"])
             new_count += 1
-            time.sleep(1)  # avoid Telegram rate limit
+            time.sleep(1)
 
     save_seen(seen)
     print(f"New notifications sent: {new_count}")
