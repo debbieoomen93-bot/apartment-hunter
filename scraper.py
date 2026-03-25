@@ -16,8 +16,8 @@ from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 
 # ── Config ───────────────────────────────────────────────────────────────────
 
-TELEGRAM_TOKEN   = os.environ["TELEGRAM_TOKEN"]
-TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
+TELEGRAM_TOKEN    = os.environ["TELEGRAM_TOKEN"]
+TELEGRAM_CHAT_IDS = [cid.strip() for cid in os.environ["TELEGRAM_CHAT_ID"].split(",")]
 SEEN_FILE = "seen.json"
 
 FUNDA_URL = "https://www.funda.nl/huur/s-hertogenbosch/0-1250/+50woonopp/"
@@ -62,24 +62,25 @@ def send_telegram(listing: dict) -> None:
         f"📐 {listing['size']}\n"
         f"🔗 <a href=\"{listing['url']}\">Bekijk op Funda</a>"
     )
-    if listing.get("image"):
-        resp = requests.post(
-            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto",
-            data={
-                "chat_id": TELEGRAM_CHAT_ID,
-                "photo": listing["image"],
-                "caption": text,
-                "parse_mode": "HTML",
-            },
+    for chat_id in TELEGRAM_CHAT_IDS:
+        if listing.get("image"):
+            resp = requests.post(
+                f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto",
+                data={
+                    "chat_id": chat_id,
+                    "photo": listing["image"],
+                    "caption": text,
+                    "parse_mode": "HTML",
+                },
+                timeout=10,
+            )
+            if resp.ok:
+                continue
+        requests.post(
+            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+            data={"chat_id": chat_id, "text": text, "parse_mode": "HTML"},
             timeout=10,
         )
-        if resp.ok:
-            return
-    requests.post(
-        f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
-        data={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML"},
-        timeout=10,
-    )
 
 
 # ── Funda scraper ─────────────────────────────────────────────────────────────
